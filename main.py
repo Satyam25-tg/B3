@@ -24,8 +24,8 @@ subscribers = []
 
 # Proxy configuration
 PROXY = {
-    'http': 'http://k9xpmz64oxn8o6h-country-us:vgyg55mrlahbujv@rp.scrapegw.com:6060',
-    'https': 'http://k9xpmz64oxn8o6h-country-us:vgyg55mrlahbujv@rp.scrapegw.com:6060',
+    'http': 'http://brd-customer-hl_8b6fdb4e-zone-hg_proxys:nv1pu6hbgrvz@brd.superproxy.io:33335',
+    'https': 'http://brd-customer-hl_8b6fdb4e-zone-hg_proxys:nv1pu6hbgrvz@brd.superproxy.io:33335',
 }
 
 # Load subscribers from JSON file
